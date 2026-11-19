@@ -726,7 +726,7 @@ void incAnimationUpdate() {
         incAnimationRender();
     }
 
-    if (incEditMode() == EditMode.AnimEdit && incAnimationCurrent && incGetWindowsOpen() == 0) {
+    if (incEditMode() == EditMode.AnimEdit && incAnimationCurrent && incGetWindowsOpen() == 0 && !igGetIO().WantTextInput) {
         if (igIsKeyPressed(ImGuiKey.Space, false)) {
             if (!incAnimationCurrent.playing || incAnimationCurrent.paused){
                 if (igIsKeyDown(ImGuiKey.LeftCtrl) || igIsKeyDown(ImGuiKey.RightCtrl) && incAnimationCurrent.frame != 0) {

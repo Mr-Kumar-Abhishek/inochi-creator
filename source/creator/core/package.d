@@ -36,6 +36,7 @@ public import creator.core.tasks;
 public import creator.core.path;
 public import creator.core.font;
 public import creator.core.dpi;
+public import creator.core.ime;
 import i18n;
 
 version(OSX) {
@@ -174,6 +175,7 @@ void incFinalize() {
     igSaveIniSettingsToDisk(igGetIO().IniFilename);
 
     // Cleanup
+    incImeShutdown();
     incGLBackendShutdown();
     ImGui_ImplSDL2_Shutdown();
     igDestroyContext(null);
@@ -250,6 +252,7 @@ void incOpenWindow() {
     }
 
     
+    incImeSetHints();
     int code = SDL_Init(SDL_INIT_EVERYTHING & ~SDL_INIT_AUDIO);
     enforce(
         code == 0,
@@ -280,7 +283,6 @@ void incOpenWindow() {
 
     // Don't make KDE freak out when Inochi Creator opens
     if (!incSettingsGet!bool("DisableCompositor")) SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
-    SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
 
     version(InBranding) {
         debug string WIN_TITLE = "Inochi Creator "~_("(Debug Mode)");
@@ -424,6 +426,7 @@ void incCreateContext() {
 
     //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;                         // Enable Keyboard Navigation
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
+    incImeInit();
     incGLBackendInit(null);
 
     // Setup font handling
@@ -725,6 +728,7 @@ void incEndLoop() {
     // incGLBackendEndRender();
 
     incCleanupDialogs();
+    incImeRenderComposition();
 
     // Rendering
     igRender();
@@ -858,6 +862,7 @@ Texture incGetGrid() {
 
 void incHandleShortcuts() {
     auto io = igGetIO();
+    if (io.WantTextInput) return;
     
     if (incShortcut("Ctrl+Shift+Z", true)) {
         incActionRedo();

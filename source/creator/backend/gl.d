@@ -6,6 +6,7 @@
 */
 module creator.backend.gl;
 import creator.core.dpi;
+import creator.core.ime : incImeProcessEvent;
 import bindbc.opengl;
 import bindbc.imgui;
 import core.stdc.stdio;
@@ -104,6 +105,8 @@ void incGLBackendBeginRender() {
 }
 
 bool incGLBackendProcessEvent(const(SDL_Event)* event) {
+    if (incImeProcessEvent(event)) return true;
+
     version (UseUIScaling) {
         version (OSX) {
             

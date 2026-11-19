@@ -7,16 +7,92 @@
 module creator.widgets.inputtext;
 import creator.widgets;
 import creator.core;
-import inochi2d;
-import bindbc.sdl;
-import std.stdio;
-import std.string;
-import core.memory : GC;
+import core.stdc.string : memcpy;
 
 private {
-
     struct TextCallbackUserData {
-        string* str;
+        char[]* scratch;
+    }
+
+    extern(C) int incInputTextResizeCallback(ImGuiInputTextCallbackData* data) {
+        try {
+            if (data !is null && data.EventFlag == ImGuiInputTextFlags.CallbackResize) {
+                auto udata = cast(TextCallbackUserData*)data.UserData;
+                if (udata is null || udata.scratch is null) return 0;
+
+                int textLen = data.BufTextLen < 0 ? 0 : data.BufTextLen;
+                size_t needed = cast(size_t)textLen + 1;
+                if (data.BufSize > 0 && cast(size_t)data.BufSize > needed) {
+                    needed = cast(size_t)data.BufSize;
+                }
+
+                if ((*udata.scratch).length < needed) {
+                    (*udata.scratch).length = needed;
+                }
+
+                data.Buf = (*udata.scratch).ptr;
+                data.BufSize = cast(int)((*udata.scratch).length > int.max ? int.max : (*udata.scratch).length);
+                data.Buf[textLen] = '\0';
+            }
+        } catch (Throwable) {
+            // Never unwind D exceptions across C/C++ ImGui callbacks.
+        }
+        return 0;
+    }
+
+    bool incInputTextImpl(string wId, float width, ref string buffer, ImGuiInputTextFlags flags) {
+        static char[] scratch;
+
+        if (wId.ptr is null) wId = "";
+        if (buffer.ptr is null) buffer = "";
+
+        size_t initialLen = buffer.length;
+        foreach (i, char c; buffer) {
+            if (c == '\0') {
+                initialLen = i;
+                break;
+            }
+        }
+
+        if (scratch.length < initialLen + 1) {
+            scratch.length = initialLen + 1;
+        }
+        if (initialLen > 0) {
+            memcpy(scratch.ptr, buffer.ptr, initialLen);
+        }
+        scratch[initialLen] = '\0';
+
+        // Push ID
+        auto id = igGetID(wId.ptr, wId.ptr + wId.length);
+        igPushID(id);
+        scope(exit) igPopID();
+
+        // Set desired width
+        igPushItemWidth(width);
+        scope(exit) igPopItemWidth();
+
+        TextCallbackUserData cb;
+        cb.scratch = &scratch;
+
+        bool result = igInputText(
+            "###INPUT",
+            scratch.ptr,
+            scratch.length,
+            flags | ImGuiInputTextFlags.CallbackResize,
+            &incInputTextResizeCallback,
+            &cb
+        );
+
+        size_t actualLen = 0;
+        while (actualLen < scratch.length && scratch[actualLen] != '\0') {
+            actualLen++;
+        }
+
+        if (scratch[0 .. actualLen] != buffer) {
+            buffer = scratch[0 .. actualLen].idup;
+        }
+
+        return result;
     }
 }
 
@@ -32,74 +108,9 @@ bool incInputText(string wId, ref string buffer, ImGuiInputTextFlags flags = ImG
     D compatible text input
 */
 bool incInputText(string wId, float width, ref string buffer, ImGuiInputTextFlags flags = ImGuiInputTextFlags.None) {
-
-    // NOTE: null strings would result in segfault, make sure it's at least just empty.
-    if (buffer.ptr is null) {
-        buffer = "";
-    }
-
-    if (buffer.ptr[buffer.length] != '\0') {
-        // If buffer.ptr does not end with '\0', recreate string to force '\0' at the end.
-        buffer = buffer.ptr[0..buffer.length]~'\0';
-    }
-
-    // Push ID
-    auto id = igGetID(wId.ptr, wId.ptr+wId.length);
-    igPushID(id);
-    scope(exit) igPopID();
-
-    // Set desired width
-    igPushItemWidth(width);
-    scope(success) igPopItemWidth();
-
-    // Create callback data
-    TextCallbackUserData cb;
-    cb.str = &buffer;
-
-    // Call ImGui's input handling
-    if (igInputText(
-        "###INPUT",
-        cast(char*)buffer.ptr, 
-        buffer.length+1,
-        flags | ImGuiInputTextFlags.CallbackResize,
-        cast(ImGuiInputTextCallback)(ImGuiInputTextCallbackData* data) {
-            TextCallbackUserData* udata = cast(TextCallbackUserData*)data.UserData;
-
-            // Allow resizing strings on GC heap
-            if (data.EventFlag == ImGuiInputTextFlags.CallbackResize) {
-
-                // Make sure the buffer doesn't become negatively sized.
-                if (data.BufTextLen < 0) data.BufTextLen = 0;
-
-                // Resize and pass buffer ptr in
-                (*udata.str).length = data.BufTextLen+1;
-
-                // slice out the null terminator
-                data.Buf = cast(char*)(*udata.str).ptr;
-                data.Buf[data.BufTextLen] = '\0';
-                (*udata.str) = (*udata.str)[0..$-1];
-            }
-            return 0;
-        },
-        &cb
-    )) {
-        return true;
-    }
-
-    ImVec2 min, max;
-    igGetItemRectMin(&min);
-    igGetItemRectMax(&max);
-
-    auto rect = SDL_Rect(
-        cast(int)min.x+32, 
-        cast(int)min.y, 
-        cast(int)max.x, 
-        32
-    );
-
-    SDL_SetTextInputRect(&rect);
-    return false;
+    return incInputTextImpl(wId, width, buffer, flags);
 }
+
 /**
     D compatible text input
 */
@@ -112,72 +123,37 @@ bool incInputText(string wId, string label, ref string buffer, ImGuiInputTextFla
     D compatible text input
 */
 bool incInputText(string wId, string label, float width, ref string buffer, ImGuiInputTextFlags flags = ImGuiInputTextFlags.None) {
+    if (label.ptr is null) label = "";
 
-    // NOTE: null strings would result in segfault, make sure it's at least just empty.
-    if (buffer.ptr is null) {
-        buffer = "";
-    }
+    bool result = incInputTextImpl(wId, width, buffer, flags);
+    igSameLine(0, igGetStyle().ItemSpacing.x);
+    igTextEx(label.ptr, label.ptr + label.length);
+    return result;
+}
 
-    // Push ID
-    auto id = igGetID(wId.ptr, wId.ptr+wId.length);
-    igPushID(id);
-    scope(exit) igPopID();
-
-    // Set desired width
-    igPushItemWidth(width);
-    scope(success) igPopItemWidth();
-
-    // Render label
-    scope(success) {
-        igSameLine(0, igGetStyle().ItemSpacing.x);
-        igTextEx(label.ptr, label.ptr+label.length);
-    }
-
-    // Create callback data
+unittest {
+    char[] buf = ['a', 'b', '\0'];
     TextCallbackUserData cb;
-    cb.str = &buffer;
+    cb.scratch = &buf;
 
-    // Call ImGui's input handling
-    if (igInputText(
-        "###INPUT",
-        cast(char*)buffer.ptr, 
-        buffer.length+1,
-        flags | ImGuiInputTextFlags.CallbackResize,
-        cast(ImGuiInputTextCallback)(ImGuiInputTextCallbackData* data) {
-            TextCallbackUserData* udata = cast(TextCallbackUserData*)data.UserData;
+    // Grows buffer for multi-byte CJK UTF-8 input
+    string cjk = "日本語テスト";
+    ImGuiInputTextCallbackData data;
+    data.EventFlag = ImGuiInputTextFlags.CallbackResize;
+    data.UserData = &cb;
+    data.Buf = buf.ptr;
+    data.BufTextLen = cast(int)cjk.length;
+    data.BufSize = cast(int)cjk.length + 1;
 
-            // Allow resizing strings on GC heap
-            if (data.EventFlag == ImGuiInputTextFlags.CallbackResize) {
+    assert(incInputTextResizeCallback(&data) == 0);
+    assert(buf.length >= cjk.length + 1);
+    assert(data.Buf is buf.ptr);
+    assert(data.BufSize == cast(int)buf.length);
+    assert(data.Buf[cjk.length] == '\0');
 
-                // Make sure the buffer doesn't become negatively sized.
-                if (data.BufTextLen < 0) data.BufTextLen = 0;
-            
-                // Resize and pass buffer ptr in
-                (*udata.str).length = data.BufTextLen+1;
-
-                // slice out the null terminator
-                data.Buf = cast(char*)(*udata.str).ptr;
-                data.Buf[data.BufTextLen] = '\0';
-                (*udata.str) = (*udata.str)[0..$-1];
-            }
-            return 0;
-        },
-        &cb
-    )) {
-        return true;
-    }
-
-    ImVec2 min, max;
-    igGetItemRectMin(&min);
-    igGetItemRectMax(&max);
-
-    auto rect = SDL_Rect(
-        cast(int)min.x+32, 
-        cast(int)min.y, 
-        cast(int)max.x, 
-        32
-    );
-
-    SDL_SetTextInputRect(&rect);
-    return false;
+    // Clamps negative BufTextLen safely to 0
+    data.BufTextLen = -5;
+    data.BufSize = 4;
+    assert(incInputTextResizeCallback(&data) == 0);
+    assert(data.Buf[0] == '\0');
 }
